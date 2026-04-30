@@ -1,17 +1,17 @@
 import { createServer } from "node:http";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync, createReadStream } from "node:fs";
 import { extname, join, normalize, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import pg from "pg";
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = resolve(".");
 const PUBLIC_DIR = join(ROOT, "public");
-const DATA_DIR = join(ROOT, "data");
-const TODOS_FILE = join(DATA_DIR, "todos.json");
+const DATABASE_URL = process.env.DATABASE_URL;
 const TODO_STATUSES = new Set(["todo", "ongoing", "blocked", "done"]);
 const PRIORITIES = new Set(["Low", "Medium", "High"]);
+const { Pool } = pg;
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -22,71 +22,15 @@ const contentTypes = new Map([
   [".ico", "image/x-icon"]
 ]);
 
-async function ensureDataFile() {
-  await mkdir(DATA_DIR, { recursive: true });
-
-  if (!existsSync(TODOS_FILE)) {
-    const now = new Date().toISOString();
-    const starterTodos = [
-      {
-        id: randomUUID(),
-        title: "Return package before Sunday",
-        description: "",
-        notes: "",
-        owner: "Family",
-        dueDate: "",
-        priority: "Medium",
-        category: "Home",
-        status: "todo",
-        done: false,
-        createdAt: now,
-        updatedAt: now
-      },
-      {
-        id: randomUUID(),
-        title: "Call mum",
-        description: "",
-        notes: "",
-        owner: "Family",
-        dueDate: "",
-        priority: "Medium",
-        category: "Family",
-        status: "todo",
-        done: false,
-        createdAt: now,
-        updatedAt: now
-      },
-      {
-        id: randomUUID(),
-        title: "Plan summer vacation",
-        description: "",
-        notes: "",
-        owner: "Family",
-        dueDate: "",
-        priority: "High",
-        category: "Planning",
-        status: "ongoing",
-        done: false,
-        createdAt: now,
-        updatedAt: now
-      }
-    ];
-
-    await writeTodos(starterTodos);
-  }
+if (!DATABASE_URL) {
+  console.error("DATABASE_URL is required. Set it to your Render Postgres connection string.");
+  process.exit(1);
 }
 
-async function readTodos() {
-  await ensureDataFile();
-  const raw = await readFile(TODOS_FILE, "utf8");
-  const parsed = JSON.parse(raw);
-  return Array.isArray(parsed) ? parsed : [];
-}
-
-async function writeTodos(todos) {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(TODOS_FILE, `${JSON.stringify(todos, null, 2)}\n`);
-}
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: DATABASE_URL.includes("sslmode=require") ? { rejectUnauthorized: false } : undefined
+});
 
 function normalizeStatus(value, done = false) {
   const status = String(value || "").trim();
@@ -118,6 +62,154 @@ function hydrateTodo(todo) {
     status,
     done: status === "done"
   };
+}
+
+function todoFromRow(row) {
+  return hydrateTodo({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    notes: row.description,
+    owner: row.owner,
+    dueDate: row.due_date,
+    priority: row.priority,
+    category: row.category,
+    status: row.status,
+    done: row.done,
+    createdAt: row.created_at?.toISOString?.() || row.created_at,
+    updatedAt: row.updated_at?.toISOString?.() || row.updated_at
+  });
+}
+
+async function ensureDatabase() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS todos (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      owner TEXT NOT NULL DEFAULT 'Family',
+      due_date TEXT NOT NULL DEFAULT '',
+      priority TEXT NOT NULL DEFAULT 'Medium',
+      category TEXT NOT NULL DEFAULT 'General',
+      status TEXT NOT NULL DEFAULT 'todo',
+      done BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+async function listTodos() {
+  const result = await pool.query(`
+    SELECT *
+    FROM todos
+    ORDER BY created_at DESC
+  `);
+
+  return result.rows.map(todoFromRow);
+}
+
+async function getTodo(id) {
+  const result = await pool.query(
+    `
+      SELECT *
+      FROM todos
+      WHERE id = $1
+    `,
+    [id]
+  );
+
+  return result.rows[0] ? todoFromRow(result.rows[0]) : null;
+}
+
+async function createTodo(payload) {
+  const now = new Date();
+  const todo = {
+    id: randomUUID(),
+    ...payload,
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString()
+  };
+  const result = await pool.query(
+    `
+      INSERT INTO todos (
+        id,
+        title,
+        description,
+        owner,
+        due_date,
+        priority,
+        category,
+        status,
+        done,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING *
+    `,
+    [
+      todo.id,
+      todo.title,
+      todo.description,
+      todo.owner,
+      todo.dueDate,
+      todo.priority,
+      todo.category,
+      todo.status,
+      todo.done,
+      todo.createdAt,
+      todo.updatedAt
+    ]
+  );
+
+  return todoFromRow(result.rows[0]);
+}
+
+async function updateTodo(id, payload) {
+  const result = await pool.query(
+    `
+      UPDATE todos
+      SET
+        title = $2,
+        description = $3,
+        owner = $4,
+        due_date = $5,
+        priority = $6,
+        category = $7,
+        status = $8,
+        done = $9,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [
+      id,
+      payload.title,
+      payload.description,
+      payload.owner,
+      payload.dueDate,
+      payload.priority,
+      payload.category,
+      payload.status,
+      payload.done
+    ]
+  );
+
+  return result.rows[0] ? todoFromRow(result.rows[0]) : null;
+}
+
+async function deleteTodo(id) {
+  const result = await pool.query(
+    `
+      DELETE FROM todos
+      WHERE id = $1
+      RETURNING *
+    `,
+    [id]
+  );
+
+  return result.rows[0] ? todoFromRow(result.rows[0]) : null;
 }
 
 async function readJsonBody(req) {
@@ -168,23 +260,14 @@ function normalizeTodoPayload(payload) {
 async function handleTodosApi(req, res, pathname) {
   try {
     if (pathname === "/api/todos" && req.method === "GET") {
-      const todos = await readTodos();
-      sendJson(res, 200, todos.map(hydrateTodo));
+      const todos = await listTodos();
+      sendJson(res, 200, todos);
       return true;
     }
 
     if (pathname === "/api/todos" && req.method === "POST") {
       const payload = normalizeTodoPayload(await readJsonBody(req));
-      const now = new Date().toISOString();
-      const todo = {
-        id: randomUUID(),
-        ...payload,
-        createdAt: now,
-        updatedAt: now
-      };
-      const todos = await readTodos();
-      todos.unshift(todo);
-      await writeTodos(todos);
+      const todo = await createTodo(payload);
       sendJson(res, 201, todo);
       return true;
     }
@@ -195,17 +278,15 @@ async function handleTodosApi(req, res, pathname) {
     }
 
     const id = match[1];
-    const todos = await readTodos();
-    const index = todos.findIndex((todo) => todo.id === id);
+    const current = await getTodo(id);
 
-    if (index === -1) {
+    if (!current) {
       sendError(res, 404, "TODO not found.");
       return true;
     }
 
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
-      const current = todos[index];
       const next = {
         ...current,
         updatedAt: new Date().toISOString()
@@ -233,15 +314,13 @@ async function handleTodosApi(req, res, pathname) {
         Object.assign(next, normalizeTodoPayload({ ...next, ...body }));
       }
 
-      todos[index] = hydrateTodo(next);
-      await writeTodos(todos);
-      sendJson(res, 200, todos[index]);
+      const updated = await updateTodo(id, hydrateTodo(next));
+      sendJson(res, 200, updated);
       return true;
     }
 
     if (req.method === "DELETE") {
-      const [removed] = todos.splice(index, 1);
-      await writeTodos(todos);
+      const removed = await deleteTodo(id);
       sendJson(res, 200, removed);
       return true;
     }
@@ -289,7 +368,7 @@ const server = createServer(async (req, res) => {
   serveStatic(req, res, url.pathname);
 });
 
-await ensureDataFile();
+await ensureDatabase();
 
 server.on("error", (error) => {
   if (error.code === "EADDRINUSE") {
