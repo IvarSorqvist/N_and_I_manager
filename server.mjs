@@ -5,7 +5,7 @@ import { extname, join, normalize, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
 const PORT = Number(process.env.PORT || 3000);
-const HOST = process.env.HOST || "localhost";
+const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = resolve(".");
 const PUBLIC_DIR = join(ROOT, "public");
 const DATA_DIR = join(ROOT, "data");
