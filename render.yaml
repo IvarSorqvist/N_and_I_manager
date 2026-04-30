@@ -9,3 +9,16 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: n-and-i-manager-db
+          property: connectionString
+
+databases:
+  - name: n-and-i-manager-db
+    databaseName: n_and_i_manager
+    user: n_and_i_manager
+    plan: free
+    region: frankfurt
+    postgresMajorVersion: "18"
+    ipAllowList: []
