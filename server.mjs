@@ -10,6 +10,8 @@ const ROOT = resolve(".");
 const PUBLIC_DIR = join(ROOT, "public");
 const DATA_DIR = join(ROOT, "data");
 const TODOS_FILE = join(DATA_DIR, "todos.json");
+const TODO_STATUSES = new Set(["todo", "ongoing", "blocked", "done"]);
+const PRIORITIES = new Set(["Low", "Medium", "High"]);
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -29,9 +31,13 @@ async function ensureDataFile() {
       {
         id: randomUUID(),
         title: "Return package before Sunday",
+        description: "",
         notes: "",
         owner: "Family",
         dueDate: "",
+        priority: "Medium",
+        category: "Home",
+        status: "todo",
         done: false,
         createdAt: now,
         updatedAt: now
@@ -39,9 +45,13 @@ async function ensureDataFile() {
       {
         id: randomUUID(),
         title: "Call mum",
+        description: "",
         notes: "",
         owner: "Family",
         dueDate: "",
+        priority: "Medium",
+        category: "Family",
+        status: "todo",
         done: false,
         createdAt: now,
         updatedAt: now
@@ -49,9 +59,13 @@ async function ensureDataFile() {
       {
         id: randomUUID(),
         title: "Plan summer vacation",
+        description: "",
         notes: "",
         owner: "Family",
         dueDate: "",
+        priority: "High",
+        category: "Planning",
+        status: "ongoing",
         done: false,
         createdAt: now,
         updatedAt: now
@@ -72,6 +86,38 @@ async function readTodos() {
 async function writeTodos(todos) {
   await mkdir(DATA_DIR, { recursive: true });
   await writeFile(TODOS_FILE, `${JSON.stringify(todos, null, 2)}\n`);
+}
+
+function normalizeStatus(value, done = false) {
+  const status = String(value || "").trim();
+
+  if (TODO_STATUSES.has(status)) {
+    return status;
+  }
+
+  return done ? "done" : "todo";
+}
+
+function normalizePriority(value) {
+  const priority = String(value || "Medium").trim();
+  return PRIORITIES.has(priority) ? priority : "Medium";
+}
+
+function hydrateTodo(todo) {
+  const status = normalizeStatus(todo.status, todo.done);
+  const description = String(todo.description ?? todo.notes ?? "").trim();
+
+  return {
+    ...todo,
+    description,
+    notes: description,
+    owner: String(todo.owner || "Family").trim() || "Family",
+    dueDate: String(todo.dueDate || "").trim(),
+    priority: normalizePriority(todo.priority),
+    category: String(todo.category || "General").trim() || "General",
+    status,
+    done: status === "done"
+  };
 }
 
 async function readJsonBody(req) {
@@ -99,6 +145,8 @@ function sendError(res, statusCode, message) {
 
 function normalizeTodoPayload(payload) {
   const title = String(payload.title || "").trim();
+  const status = normalizeStatus(payload.status, payload.done);
+  const description = String(payload.description ?? payload.notes ?? "").trim();
 
   if (!title) {
     throw new Error("A TODO title is required.");
@@ -106,9 +154,14 @@ function normalizeTodoPayload(payload) {
 
   return {
     title,
-    notes: String(payload.notes || "").trim(),
+    description,
+    notes: description,
     owner: String(payload.owner || "Family").trim() || "Family",
-    dueDate: String(payload.dueDate || "").trim()
+    dueDate: String(payload.dueDate || "").trim(),
+    priority: normalizePriority(payload.priority),
+    category: String(payload.category || "General").trim() || "General",
+    status,
+    done: status === "done"
   };
 }
 
@@ -116,7 +169,7 @@ async function handleTodosApi(req, res, pathname) {
   try {
     if (pathname === "/api/todos" && req.method === "GET") {
       const todos = await readTodos();
-      sendJson(res, 200, todos);
+      sendJson(res, 200, todos.map(hydrateTodo));
       return true;
     }
 
@@ -126,7 +179,6 @@ async function handleTodosApi(req, res, pathname) {
       const todo = {
         id: randomUUID(),
         ...payload,
-        done: false,
         createdAt: now,
         updatedAt: now
       };
@@ -161,20 +213,29 @@ async function handleTodosApi(req, res, pathname) {
 
       if (Object.hasOwn(body, "done")) {
         next.done = Boolean(body.done);
+        next.status = next.done ? "done" : "todo";
+      }
+
+      if (Object.hasOwn(body, "status")) {
+        next.status = normalizeStatus(body.status, next.done);
+        next.done = next.status === "done";
       }
 
       if (
         Object.hasOwn(body, "title") ||
+        Object.hasOwn(body, "description") ||
         Object.hasOwn(body, "notes") ||
         Object.hasOwn(body, "owner") ||
-        Object.hasOwn(body, "dueDate")
+        Object.hasOwn(body, "dueDate") ||
+        Object.hasOwn(body, "priority") ||
+        Object.hasOwn(body, "category")
       ) {
-        Object.assign(next, normalizeTodoPayload({ ...current, ...body }));
+        Object.assign(next, normalizeTodoPayload({ ...next, ...body }));
       }
 
-      todos[index] = next;
+      todos[index] = hydrateTodo(next);
       await writeTodos(todos);
-      sendJson(res, 200, next);
+      sendJson(res, 200, todos[index]);
       return true;
     }
 

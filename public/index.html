@@ -46,40 +46,43 @@
               Due
               <input id="dueDateInput" name="dueDate" type="date" />
             </label>
-            <label class="notes-field">
-              Notes
-              <input id="notesInput" name="notes" type="text" autocomplete="off" placeholder="Optional details" />
+            <label>
+              Priority
+              <select id="priorityInput" name="priority">
+                <option>Medium</option>
+                <option>High</option>
+                <option>Low</option>
+              </select>
+            </label>
+            <label>
+              Category
+              <input id="categoryInput" name="category" type="text" autocomplete="off" placeholder="Home" />
+            </label>
+            <label class="description-field">
+              Description
+              <textarea id="descriptionInput" name="description" autocomplete="off" placeholder="Optional details"></textarea>
             </label>
             <button type="submit">Add TODO</button>
           </form>
 
           <div class="toolbar">
-            <div class="segmented" aria-label="TODO filter">
-              <button class="filter active" type="button" data-filter="all">All</button>
-              <button class="filter" type="button" data-filter="open">Open</button>
-              <button class="filter" type="button" data-filter="done">Done</button>
-            </div>
             <input id="searchInput" class="search" type="search" placeholder="Search TODOs" />
           </div>
 
-          <div class="todo-list" id="todoList"></div>
+          <div class="kanban-board" id="todoBoard" aria-label="TODO Kanban board"></div>
           <div class="empty-state" id="emptyState" hidden>No TODOs match this view.</div>
         </section>
       </main>
     </div>
 
     <template id="todoTemplate">
-      <article class="todo-item">
-        <label class="check-wrap">
-          <input class="todo-check" type="checkbox" />
-          <span></span>
-        </label>
+      <article class="todo-item" draggable="true" tabindex="0">
         <div class="todo-content">
           <div class="todo-mainline">
             <h3 class="todo-title"></h3>
-            <div class="todo-meta"></div>
           </div>
-          <p class="todo-notes"></p>
+          <div class="todo-tags"></div>
+          <p class="todo-description"></p>
         </div>
         <button class="delete-button" type="button" aria-label="Delete TODO">Delete</button>
       </article>

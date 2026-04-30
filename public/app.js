@@ -1,22 +1,30 @@
 const state = {
   todos: [],
-  filter: "all",
-  search: ""
+  search: "",
+  expandedTodoIds: new Set()
 };
+
+const kanbanColumns = [
+  { id: "todo", title: "TODO" },
+  { id: "ongoing", title: "Ongoing" },
+  { id: "blocked", title: "Blocked" },
+  { id: "done", title: "Done" }
+];
 
 const elements = {
   form: document.querySelector("#todoForm"),
   titleInput: document.querySelector("#titleInput"),
   ownerInput: document.querySelector("#ownerInput"),
   dueDateInput: document.querySelector("#dueDateInput"),
-  notesInput: document.querySelector("#notesInput"),
-  list: document.querySelector("#todoList"),
+  priorityInput: document.querySelector("#priorityInput"),
+  categoryInput: document.querySelector("#categoryInput"),
+  descriptionInput: document.querySelector("#descriptionInput"),
+  board: document.querySelector("#todoBoard"),
   template: document.querySelector("#todoTemplate"),
   counter: document.querySelector("#todoCounter"),
   emptyState: document.querySelector("#emptyState"),
   syncStatus: document.querySelector("#syncStatus"),
-  searchInput: document.querySelector("#searchInput"),
-  filters: [...document.querySelectorAll(".filter")]
+  searchInput: document.querySelector("#searchInput")
 };
 
 function setStatus(text) {
@@ -57,46 +65,175 @@ function getVisibleTodos() {
   const term = state.search.toLowerCase();
 
   return state.todos.filter((todo) => {
-    const matchesFilter =
-      state.filter === "all" ||
-      (state.filter === "open" && !todo.done) ||
-      (state.filter === "done" && todo.done);
+    const searchable = [
+      todo.title,
+      todo.owner,
+      todo.description,
+      todo.dueDate,
+      todo.priority,
+      todo.category,
+      todo.status
+    ]
+      .join(" ")
+      .toLowerCase();
 
-    const searchable = `${todo.title} ${todo.owner} ${todo.notes} ${todo.dueDate}`.toLowerCase();
-    return matchesFilter && searchable.includes(term);
+    return searchable.includes(term);
   });
+}
+
+function getTodoStatus(todo) {
+  if (kanbanColumns.some((column) => column.id === todo.status)) {
+    return todo.status;
+  }
+
+  return todo.done ? "done" : "todo";
+}
+
+function makeTag(label, value, variant = "") {
+  const tag = document.createElement("span");
+  tag.className = variant ? `todo-tag ${variant}` : "todo-tag";
+  tag.textContent = `${label}: ${value}`;
+  return tag;
+}
+
+function renderTodoCard(todo) {
+  const fragment = elements.template.content.cloneNode(true);
+  const item = fragment.querySelector(".todo-item");
+  const title = fragment.querySelector(".todo-title");
+  const tags = fragment.querySelector(".todo-tags");
+  const description = fragment.querySelector(".todo-description");
+  const deleteButton = fragment.querySelector(".delete-button");
+  const expanded = state.expandedTodoIds.has(todo.id);
+
+  item.dataset.todoId = todo.id;
+  item.classList.toggle("done", getTodoStatus(todo) === "done");
+  item.classList.toggle("expanded", expanded);
+  item.setAttribute("aria-expanded", String(expanded));
+  title.textContent = todo.title;
+
+  tags.replaceChildren(
+    makeTag("Due", formatDueDate(todo.dueDate) || "No date"),
+    makeTag("Priority", todo.priority || "Medium", `priority-${String(todo.priority || "Medium").toLowerCase()}`),
+    makeTag("Owner", todo.owner || "Family"),
+    makeTag("Category", todo.category || "General")
+  );
+
+  description.textContent = todo.description || "No description added.";
+  description.hidden = !expanded;
+
+  item.addEventListener("click", (event) => {
+    if (event.target.closest("button")) {
+      return;
+    }
+
+    toggleDescription(todo.id);
+  });
+
+  item.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    toggleDescription(todo.id);
+  });
+
+  item.addEventListener("dragstart", (event) => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", todo.id);
+    item.classList.add("dragging");
+  });
+
+  item.addEventListener("dragend", () => {
+    item.classList.remove("dragging");
+    document.querySelectorAll(".kanban-column.drop-target").forEach((column) => {
+      column.classList.remove("drop-target");
+    });
+  });
+
+  deleteButton.addEventListener("click", () => deleteTodo(todo.id));
+
+  return fragment;
+}
+
+function renderColumn(column, todos) {
+  const section = document.createElement("section");
+  const header = document.createElement("div");
+  const title = document.createElement("h3");
+  const count = document.createElement("span");
+  const cards = document.createElement("div");
+
+  section.className = "kanban-column";
+  section.dataset.status = column.id;
+  header.className = "kanban-column-header";
+  count.className = "column-count";
+  cards.className = "kanban-cards";
+  title.textContent = column.title;
+  count.textContent = String(todos.length);
+
+  header.replaceChildren(title, count);
+  section.replaceChildren(header, cards);
+
+  for (const todo of todos) {
+    cards.append(renderTodoCard(todo));
+  }
+
+  section.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    section.classList.add("drop-target");
+  });
+
+  section.addEventListener("dragleave", (event) => {
+    if (!section.contains(event.relatedTarget)) {
+      section.classList.remove("drop-target");
+    }
+  });
+
+  section.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    section.classList.remove("drop-target");
+
+    const todoId = event.dataTransfer.getData("text/plain");
+    const todo = state.todos.find((item) => item.id === todoId);
+
+    if (!todo || getTodoStatus(todo) === column.id) {
+      return;
+    }
+
+    try {
+      await updateTodo(todoId, { status: column.id });
+    } catch (error) {
+      setStatus("Error");
+      window.alert(error.message);
+    }
+  });
+
+  return section;
 }
 
 function render() {
   const visibleTodos = getVisibleTodos();
-  const openCount = state.todos.filter((todo) => !todo.done).length;
+  const openCount = state.todos.filter((todo) => getTodoStatus(todo) !== "done").length;
 
   elements.counter.textContent = `${openCount} open`;
-  elements.list.replaceChildren();
+  elements.board.replaceChildren();
   elements.emptyState.hidden = visibleTodos.length > 0;
 
-  for (const todo of visibleTodos) {
-    const fragment = elements.template.content.cloneNode(true);
-    const item = fragment.querySelector(".todo-item");
-    const checkbox = fragment.querySelector(".todo-check");
-    const title = fragment.querySelector(".todo-title");
-    const meta = fragment.querySelector(".todo-meta");
-    const notes = fragment.querySelector(".todo-notes");
-    const deleteButton = fragment.querySelector(".delete-button");
-    const metaParts = [todo.owner || "Family", formatDueDate(todo.dueDate)].filter(Boolean);
-
-    item.classList.toggle("done", todo.done);
-    checkbox.checked = todo.done;
-    title.textContent = todo.title;
-    meta.textContent = metaParts.join(" · ");
-    notes.textContent = todo.notes || "";
-    notes.hidden = !todo.notes;
-
-    checkbox.addEventListener("change", () => updateTodo(todo.id, { done: checkbox.checked }));
-    deleteButton.addEventListener("click", () => deleteTodo(todo.id));
-
-    elements.list.append(fragment);
+  for (const column of kanbanColumns) {
+    const columnTodos = visibleTodos.filter((todo) => getTodoStatus(todo) === column.id);
+    elements.board.append(renderColumn(column, columnTodos));
   }
+}
+
+function toggleDescription(id) {
+  if (state.expandedTodoIds.has(id)) {
+    state.expandedTodoIds.delete(id);
+  } else {
+    state.expandedTodoIds.add(id);
+  }
+
+  render();
 }
 
 async function loadTodos() {
@@ -132,6 +269,7 @@ async function deleteTodo(id) {
   setStatus("Saving");
   await api(`/api/todos/${id}`, { method: "DELETE" });
   state.todos = state.todos.filter((todo) => todo.id !== id);
+  state.expandedTodoIds.delete(id);
   setStatus("Local");
   render();
 }
@@ -153,18 +291,6 @@ elements.searchInput.addEventListener("input", (event) => {
   state.search = event.target.value;
   render();
 });
-
-for (const filterButton of elements.filters) {
-  filterButton.addEventListener("click", () => {
-    state.filter = filterButton.dataset.filter;
-
-    for (const button of elements.filters) {
-      button.classList.toggle("active", button === filterButton);
-    }
-
-    render();
-  });
-}
 
 try {
   await loadTodos();
