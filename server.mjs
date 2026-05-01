@@ -10,7 +10,9 @@ const ROOT = resolve(".");
 const PUBLIC_DIR = join(ROOT, "public");
 const DATABASE_URL = process.env.DATABASE_URL;
 const TODO_STATUSES = new Set(["todo", "ongoing", "blocked", "done"]);
-const PRIORITIES = new Set(["Low", "Medium", "High"]);
+const PRIORITIES = new Set(["", "Low", "Medium", "High"]);
+const OWNERS = new Set(["", "Ivar", "Nomeny"]);
+const CATEGORIES = new Set(["", "home", "family", "vacation", "economy", "admin"]);
 const { Pool } = pg;
 
 const contentTypes = new Map([
@@ -43,8 +45,18 @@ function normalizeStatus(value, done = false) {
 }
 
 function normalizePriority(value) {
-  const priority = String(value || "Medium").trim();
-  return PRIORITIES.has(priority) ? priority : "Medium";
+  const priority = String(value || "").trim();
+  return PRIORITIES.has(priority) ? priority : "";
+}
+
+function normalizeOwner(value) {
+  const owner = String(value || "").trim();
+  return OWNERS.has(owner) ? owner : "";
+}
+
+function normalizeCategory(value) {
+  const category = String(value || "").trim().toLowerCase();
+  return CATEGORIES.has(category) ? category : "";
 }
 
 function hydrateTodo(todo) {
@@ -55,10 +67,10 @@ function hydrateTodo(todo) {
     ...todo,
     description,
     notes: description,
-    owner: String(todo.owner || "Family").trim() || "Family",
+    owner: normalizeOwner(todo.owner),
     dueDate: String(todo.dueDate || "").trim(),
     priority: normalizePriority(todo.priority),
-    category: String(todo.category || "General").trim() || "General",
+    category: normalizeCategory(todo.category),
     status,
     done: status === "done"
   };
@@ -87,15 +99,21 @@ async function ensureDatabase() {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
-      owner TEXT NOT NULL DEFAULT 'Family',
+      owner TEXT NOT NULL DEFAULT '',
       due_date TEXT NOT NULL DEFAULT '',
-      priority TEXT NOT NULL DEFAULT 'Medium',
-      category TEXT NOT NULL DEFAULT 'General',
+      priority TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'todo',
       done BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+  await pool.query(`
+    ALTER TABLE todos
+      ALTER COLUMN owner SET DEFAULT '',
+      ALTER COLUMN priority SET DEFAULT '',
+      ALTER COLUMN category SET DEFAULT ''
   `);
 }
 
@@ -248,10 +266,10 @@ function normalizeTodoPayload(payload) {
     title,
     description,
     notes: description,
-    owner: String(payload.owner || "Family").trim() || "Family",
+    owner: normalizeOwner(payload.owner),
     dueDate: String(payload.dueDate || "").trim(),
     priority: normalizePriority(payload.priority),
-    category: String(payload.category || "General").trim() || "General",
+    category: normalizeCategory(payload.category),
     status,
     done: status === "done"
   };

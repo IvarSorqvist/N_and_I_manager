@@ -191,7 +191,9 @@ textarea:focus {
 }
 
 .todo-form button,
-.delete-button {
+.delete-button,
+.save-button,
+.cancel-button {
   min-height: 42px;
   border: 0;
   border-radius: 8px;
@@ -216,6 +218,7 @@ textarea:focus {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 12px;
   margin: 18px 0;
 }
@@ -248,7 +251,15 @@ textarea:focus {
 }
 
 .search {
+  flex: 1 1 220px;
   max-width: 320px;
+}
+
+.board-control {
+  flex: 0 1 150px;
+  min-height: 38px;
+  font-size: 0.84rem;
+  padding: 0 10px;
 }
 
 .kanban-board {
@@ -312,8 +323,8 @@ textarea:focus {
 
 .todo-item {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
+  grid-template-columns: 1fr;
+  gap: 8px;
   align-items: start;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -361,11 +372,11 @@ textarea:focus {
   border-radius: 999px;
   background: var(--surface-muted);
   color: var(--muted);
-  font-size: 0.74rem;
-  font-weight: 720;
+  font-size: 0.62rem;
+  font-weight: 700;
   line-height: 1.2;
   overflow-wrap: anywhere;
-  padding: 5px 8px;
+  padding: 3px 6px;
 }
 
 .priority-high {
@@ -386,6 +397,45 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 
+.todo-edit-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.todo-edit-form[hidden] {
+  display: none;
+}
+
+.todo-edit-form label {
+  font-size: 0.76rem;
+}
+
+.todo-edit-form input,
+.todo-edit-form select,
+.todo-edit-form textarea {
+  min-height: 36px;
+  border-radius: 7px;
+  padding: 0 9px;
+}
+
+.todo-edit-form textarea {
+  min-height: 72px;
+  padding: 8px 9px;
+}
+
+.edit-description-field,
+.edit-actions {
+  grid-column: 1 / -1;
+}
+
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .todo-item.done .todo-title,
 .todo-item.done .todo-description {
   color: var(--muted);
@@ -393,7 +443,15 @@ textarea:focus {
 }
 
 .delete-button {
-  min-width: 64px;
+  min-height: 30px;
+  min-width: 0;
+  border-radius: 7px;
+  font-size: 0.72rem;
+  padding: 0 9px;
+}
+
+.delete-button {
+  margin-right: auto;
   border: 1px solid rgba(163, 59, 47, 0.28);
   background: rgba(163, 59, 47, 0.08);
   color: var(--danger);
@@ -401,6 +459,24 @@ textarea:focus {
 
 .delete-button:hover {
   background: rgba(163, 59, 47, 0.14);
+}
+
+.save-button,
+.cancel-button {
+  min-height: 34px;
+  font-size: 0.78rem;
+  padding: 0 12px;
+}
+
+.save-button {
+  background: var(--accent);
+  color: #fff;
+}
+
+.cancel-button {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
 }
 
 .empty-state {
@@ -450,6 +526,10 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 
+  .todo-edit-form {
+    grid-template-columns: 1fr;
+  }
+
   .kanban-board {
     grid-template-columns: 1fr;
     overflow-x: visible;
@@ -462,5 +542,9 @@ textarea:focus {
 
   .search {
     max-width: none;
+  }
+
+  .board-control {
+    flex-basis: 100%;
   }
 }

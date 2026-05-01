@@ -1,7 +1,15 @@
 const state = {
   todos: [],
   search: "",
-  expandedTodoIds: new Set()
+  filters: {
+    owner: "all",
+    priority: "all",
+    category: "all"
+  },
+  sortBy: "created",
+  expandedTodoIds: new Set(),
+  editingTodoId: null,
+  editDrafts: new Map()
 };
 
 const kanbanColumns = [
@@ -10,6 +18,16 @@ const kanbanColumns = [
   { id: "blocked", title: "Blocked" },
   { id: "done", title: "Done" }
 ];
+
+const ownerOptions = ["", "Ivar", "Nomeny"];
+const priorityOptions = ["", "Low", "Medium", "High"];
+const categoryOptions = ["", "home", "family", "vacation", "economy", "admin"];
+const priorityRank = new Map([
+  ["High", 0],
+  ["Medium", 1],
+  ["Low", 2],
+  ["", 3]
+]);
 
 const elements = {
   form: document.querySelector("#todoForm"),
@@ -24,7 +42,11 @@ const elements = {
   counter: document.querySelector("#todoCounter"),
   emptyState: document.querySelector("#emptyState"),
   syncStatus: document.querySelector("#syncStatus"),
-  searchInput: document.querySelector("#searchInput")
+  searchInput: document.querySelector("#searchInput"),
+  ownerFilter: document.querySelector("#ownerFilter"),
+  priorityFilter: document.querySelector("#priorityFilter"),
+  categoryFilter: document.querySelector("#categoryFilter"),
+  sortSelect: document.querySelector("#sortSelect")
 };
 
 function setStatus(text) {
@@ -77,8 +99,20 @@ function getVisibleTodos() {
       .join(" ")
       .toLowerCase();
 
-    return searchable.includes(term);
+    return searchable.includes(term) && matchesTagFilters(todo);
   });
+}
+
+function matchesTagFilters(todo) {
+  const owner = normalizeOwner(todo.owner);
+  const priority = normalizePriority(todo.priority);
+  const category = normalizeCategory(todo.category);
+
+  return (
+    (state.filters.owner === "all" || owner === state.filters.owner) &&
+    (state.filters.priority === "all" || priority === state.filters.priority) &&
+    (state.filters.category === "all" || category === state.filters.category)
+  );
 }
 
 function getTodoStatus(todo) {
@@ -89,6 +123,58 @@ function getTodoStatus(todo) {
   return todo.done ? "done" : "todo";
 }
 
+function normalizeOwner(value) {
+  return ownerOptions.includes(value) ? value : ownerOptions[0];
+}
+
+function normalizeCategory(value) {
+  return categoryOptions.includes(value) ? value : categoryOptions[0];
+}
+
+function normalizePriority(value) {
+  return priorityOptions.includes(value) ? value : priorityOptions[0];
+}
+
+function compareByCreated(a, b) {
+  return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+}
+
+function compareByPriority(a, b) {
+  const rankDelta = priorityRank.get(normalizePriority(a.priority)) - priorityRank.get(normalizePriority(b.priority));
+
+  if (rankDelta !== 0) {
+    return rankDelta;
+  }
+
+  return compareByCreated(a, b);
+}
+
+function compareByDueDate(a, b) {
+  const aDate = a.dueDate || "9999-12-31";
+  const bDate = b.dueDate || "9999-12-31";
+  const dateDelta = aDate.localeCompare(bDate);
+
+  if (dateDelta !== 0) {
+    return dateDelta;
+  }
+
+  return compareByPriority(a, b);
+}
+
+function sortTodos(todos) {
+  const sorted = [...todos];
+
+  if (state.sortBy === "priority") {
+    return sorted.sort(compareByPriority);
+  }
+
+  if (state.sortBy === "dueDate") {
+    return sorted.sort(compareByDueDate);
+  }
+
+  return sorted.sort(compareByCreated);
+}
+
 function makeTag(label, value, variant = "") {
   const tag = document.createElement("span");
   tag.className = variant ? `todo-tag ${variant}` : "todo-tag";
@@ -96,49 +182,103 @@ function makeTag(label, value, variant = "") {
   return tag;
 }
 
+function getSavedEditValues(todo) {
+  return {
+    title: todo.title,
+    owner: normalizeOwner(todo.owner),
+    dueDate: todo.dueDate || "",
+    priority: normalizePriority(todo.priority),
+    category: normalizeCategory(todo.category),
+    description: todo.description || ""
+  };
+}
+
+function getEditDraft(todo) {
+  return state.editDrafts.get(todo.id) || getSavedEditValues(todo);
+}
+
+function setEditDraft(id, form) {
+  state.editDrafts.set(id, Object.fromEntries(new FormData(form)));
+}
+
 function renderTodoCard(todo) {
   const fragment = elements.template.content.cloneNode(true);
   const item = fragment.querySelector(".todo-item");
   const title = fragment.querySelector(".todo-title");
   const tags = fragment.querySelector(".todo-tags");
-  const description = fragment.querySelector(".todo-description");
   const deleteButton = fragment.querySelector(".delete-button");
+  const editForm = fragment.querySelector(".todo-edit-form");
+  const cancelButton = fragment.querySelector(".cancel-button");
   const expanded = state.expandedTodoIds.has(todo.id);
+  const editing = state.editingTodoId === todo.id;
 
   item.dataset.todoId = todo.id;
   item.classList.toggle("done", getTodoStatus(todo) === "done");
   item.classList.toggle("expanded", expanded);
-  item.setAttribute("aria-expanded", String(expanded));
+  item.classList.toggle("editing", editing);
+  item.setAttribute("aria-expanded", String(editing));
+  item.draggable = !editing;
   title.textContent = todo.title;
 
-  tags.replaceChildren(
-    makeTag("Due", formatDueDate(todo.dueDate) || "No date"),
-    makeTag("Priority", todo.priority || "Medium", `priority-${String(todo.priority || "Medium").toLowerCase()}`),
-    makeTag("Owner", todo.owner || "Family"),
-    makeTag("Category", todo.category || "General")
-  );
+  const tagNodes = [
+    todo.dueDate ? makeTag("Due", formatDueDate(todo.dueDate)) : null,
+    normalizePriority(todo.priority)
+      ? makeTag("Priority", normalizePriority(todo.priority), `priority-${normalizePriority(todo.priority).toLowerCase()}`)
+      : null,
+    normalizeOwner(todo.owner) ? makeTag("Owner", normalizeOwner(todo.owner)) : null,
+    normalizeCategory(todo.category) ? makeTag("Category", normalizeCategory(todo.category)) : null
+  ].filter(Boolean);
+  tags.replaceChildren(...tagNodes);
+  tags.hidden = tagNodes.length === 0;
+  editForm.hidden = !editing;
 
-  description.textContent = todo.description || "No description added.";
-  description.hidden = !expanded;
+  if (editing) {
+    const draft = getEditDraft(todo);
+    editForm.elements.title.value = draft.title;
+    editForm.elements.owner.value = draft.owner;
+    editForm.elements.dueDate.value = draft.dueDate;
+    editForm.elements.priority.value = draft.priority;
+    editForm.elements.category.value = draft.category;
+    editForm.elements.description.value = draft.description;
+  }
 
   item.addEventListener("click", (event) => {
-    if (event.target.closest("button")) {
+    if (event.target.closest("button, input, select, textarea, form")) {
       return;
     }
 
-    toggleDescription(todo.id);
+    if (editing) {
+      stopEditingTodo({ preserveDraft: true });
+      return;
+    }
+
+    startEditingTodo(todo.id);
   });
 
   item.addEventListener("keydown", (event) => {
+    if (event.target.closest("button, input, select, textarea, form")) {
+      return;
+    }
+
     if (event.key !== "Enter" && event.key !== " ") {
       return;
     }
 
     event.preventDefault();
-    toggleDescription(todo.id);
+    if (editing) {
+      stopEditingTodo({ preserveDraft: true });
+      return;
+    }
+
+    startEditingTodo(todo.id);
   });
 
   item.addEventListener("dragstart", (event) => {
+    if (editing) {
+      event.preventDefault();
+      return;
+    }
+
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", todo.id);
     item.classList.add("dragging");
@@ -151,6 +291,19 @@ function renderTodoCard(todo) {
     });
   });
 
+  editForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    try {
+      await saveTodoEdits(todo.id, new FormData(editForm));
+    } catch (error) {
+      setStatus("Error");
+      window.alert(error.message);
+    }
+  });
+  editForm.addEventListener("input", () => setEditDraft(todo.id, editForm));
+  editForm.addEventListener("change", () => setEditDraft(todo.id, editForm));
+  cancelButton.addEventListener("click", () => stopEditingTodo({ discardDraft: true }));
   deleteButton.addEventListener("click", () => deleteTodo(todo.id));
 
   return fragment;
@@ -221,18 +374,41 @@ function render() {
   elements.emptyState.hidden = visibleTodos.length > 0;
 
   for (const column of kanbanColumns) {
-    const columnTodos = visibleTodos.filter((todo) => getTodoStatus(todo) === column.id);
+    const columnTodos = sortTodos(visibleTodos.filter((todo) => getTodoStatus(todo) === column.id));
     elements.board.append(renderColumn(column, columnTodos));
   }
 }
 
-function toggleDescription(id) {
-  if (state.expandedTodoIds.has(id)) {
-    state.expandedTodoIds.delete(id);
-  } else {
-    state.expandedTodoIds.add(id);
+function startEditingTodo(id) {
+  state.expandedTodoIds = new Set([id]);
+  state.editingTodoId = id;
+  render();
+}
+
+function stopEditingTodo({ preserveDraft = false, discardDraft = false } = {}) {
+  if (preserveDraft && state.editingTodoId) {
+    const editForm = document.querySelector(`.todo-item[data-todo-id="${state.editingTodoId}"] .todo-edit-form`);
+
+    if (editForm) {
+      setEditDraft(state.editingTodoId, editForm);
+    }
   }
 
+  if (discardDraft && state.editingTodoId) {
+    state.editDrafts.delete(state.editingTodoId);
+  }
+
+  state.expandedTodoIds.clear();
+  state.editingTodoId = null;
+  render();
+}
+
+async function saveTodoEdits(id, formData) {
+  const changes = Object.fromEntries(formData);
+  await updateTodo(id, changes, { renderAfter: false });
+  state.editDrafts.delete(id);
+  state.editingTodoId = null;
+  state.expandedTodoIds.clear();
   render();
 }
 
@@ -254,7 +430,8 @@ async function addTodo(formData) {
   render();
 }
 
-async function updateTodo(id, changes) {
+async function updateTodo(id, changes, options = {}) {
+  const { renderAfter = true } = options;
   setStatus("Saving");
   const updated = await api(`/api/todos/${id}`, {
     method: "PATCH",
@@ -262,7 +439,9 @@ async function updateTodo(id, changes) {
   });
   state.todos = state.todos.map((todo) => (todo.id === id ? updated : todo));
   setStatus("Local");
-  render();
+  if (renderAfter) {
+    render();
+  }
 }
 
 async function deleteTodo(id) {
@@ -270,6 +449,10 @@ async function deleteTodo(id) {
   await api(`/api/todos/${id}`, { method: "DELETE" });
   state.todos = state.todos.filter((todo) => todo.id !== id);
   state.expandedTodoIds.delete(id);
+  state.editDrafts.delete(id);
+  if (state.editingTodoId === id) {
+    state.editingTodoId = null;
+  }
   setStatus("Local");
   render();
 }
@@ -289,6 +472,26 @@ elements.form.addEventListener("submit", async (event) => {
 
 elements.searchInput.addEventListener("input", (event) => {
   state.search = event.target.value;
+  render();
+});
+
+elements.ownerFilter.addEventListener("change", (event) => {
+  state.filters.owner = event.target.value;
+  render();
+});
+
+elements.priorityFilter.addEventListener("change", (event) => {
+  state.filters.priority = event.target.value;
+  render();
+});
+
+elements.categoryFilter.addEventListener("change", (event) => {
+  state.filters.category = event.target.value;
+  render();
+});
+
+elements.sortSelect.addEventListener("change", (event) => {
+  state.sortBy = event.target.value;
   render();
 });
 
